@@ -1,0 +1,32 @@
+# secrets, never commit
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.pem
+*.key
+*.p12
+credentials
+credentials.json
+
+# tooling artifacts
+node_modules/
+.wrangler/
+.vercel/
+.cache/
+
+# os and editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# scratch
+*.log
+tmp/
+scratch/
+
+# private engineering notes, never publish
+HANDOFF.md
