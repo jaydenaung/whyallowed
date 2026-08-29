@@ -428,6 +428,7 @@ code.inline{font-family:var(--mono);font-size:12.5px;background:var(--wash);padd
 <footer class="site-footer">
   <p class="foot-tag">Built by a cloud security architect, for cloud security architects.</p>
   <p class="byline">A free tool by <a href="https://x.com/jaydenaung" target="_blank" rel="noopener noreferrer">Jayden Aung</a> &middot; MIT licensed &middot; &copy; 2026</p>
+  <p class="byline" id="selftest"></p>
   <div class="foot-legal">
     <p><b>Independent project.</b> WhyAllowed is a personal project. It is not affiliated with, sponsored by, or endorsed by Amazon Web Services or any other organisation. Amazon Web Services, AWS, IAM, S3, KMS, CloudTrail and related marks are trademarks of Amazon.com, Inc. or its affiliates.</p>
     <p><b>Not an audit, and no warranty.</b> This is an analysis and teaching tool provided as is, without warranty of any kind. Its output is not a security audit, a compliance assessment, or professional advice, and no liability is accepted for any decision made using it. It sees only the policies you paste. Other attached policies, session policies, S3 Block Public Access, object ACLs, resource control policies and VPC endpoint policies can all change the real answer. Conditions are reported, not simulated. Confirm every finding with the AWS IAM policy simulator and IAM Access Analyzer before changing anything in production.</p>
@@ -448,12 +449,23 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 const arr = x => x === undefined || x === null ? [] : (Array.isArray(x) ? x : [x]);
 
 /* ---------- wildcard matching (AWS style: * and ?) ---------- */
-function rx(pattern){
-  const body = String(pattern).replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.');
-  return new RegExp('^' + body + '$', 'i');
+const RX_CACHE = new Map();
+function rx(pattern, ci){
+  const key = (ci ? 'i:' : 's:') + pattern;
+  let r = RX_CACHE.get(key);
+  if(!r){
+    const body = String(pattern).replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.');
+    r = new RegExp('^' + body + '$', ci ? 'i' : '');
+    RX_CACHE.set(key, r);
+  }
+  return r;
 }
-const matchAction = (pattern, action) => rx(pattern).test(action);
-const matchResource = (pattern, arn) => pattern === '*' ? true : rx(pattern).test(arn);
+// AWS action names are case-insensitive. Resource ARNs are case-sensitive (S3 keys, DynamoDB tables,
+// secret names...), except IAM and STS names, which AWS does not distinguish by case.
+const IAM_ARN = /^arn:[^:]*:(?:iam|sts)::/i;
+const matchAction = (pattern, action) => rx(pattern, true).test(action);
+const matchResource = (pattern, arn) => pattern === '*' ? true
+  : rx(pattern, IAM_ARN.test(String(arn)) || IAM_ARN.test(String(pattern))).test(arn);
 function accountOf(a){ const m = /^arn:[^:]*:[^:]*:[^:]*:(\d{12}):/.exec(a || ''); return m ? m[1] : null; }
 function shortName(a){
   if(!a) return 'identity';
@@ -648,19 +660,28 @@ function principalEntries(p){
   Object.keys(p).forEach(k => arr(p[k]).forEach(v => out.push({type:k, value:String(v)})));
   return out;
 }
+/* Returns 'direct'    : the statement names this principal (or "*"),
+           'delegated' : the statement names the principal's whole account ("123456789012" or
+                         arn:aws:iam::123456789012:root). AWS treats that as delegation to the
+                         account's own IAM policies, not as a grant in itself,
+           false       : no match.                                                          */
 function stmtPrincipalMatch(st, principal){
   const list = principalEntries(st.Principal);
   const nlist = principalEntries(st.NotPrincipal);
+  const isRootUser = /:root$/.test(principal.arn || '');
   const hit = e => {
-    if(e.value === '*') return true;
+    if(e.value === '*') return 'direct';
     if(principal.kind === 'anon') return false;      // anonymous only matches "*"
     if(e.type === 'Service' || e.type === 'Federated' || e.type === 'CanonicalUser') return false;
-    if(/^\d{12}$/.test(e.value)) return principal.account === e.value;
-    if(/:root$/.test(e.value)) return principal.account === accountOf(e.value);
-    return matchResource(e.value, principal.arn);
+    if(/^\d{12}$/.test(e.value)) return principal.account === e.value ? (isRootUser ? 'direct' : 'delegated') : false;
+    if(/:root$/.test(e.value)) return principal.account === accountOf(e.value) ? (isRootUser ? 'direct' : 'delegated') : false;
+    return matchResource(e.value, principal.arn) ? 'direct' : false;
   };
-  if(list.length) return list.some(hit);
-  if(nlist.length) return !nlist.some(hit);
+  if(list.length){
+    const kinds = list.map(hit).filter(Boolean);
+    return kinds.includes('direct') ? 'direct' : (kinds.length ? 'delegated' : false);
+  }
+  if(nlist.length) return nlist.some(hit) ? false : 'direct';
   return false;
 }
 function condSummary(st){
@@ -681,9 +702,10 @@ function collect(doc, effect, action, resArn, principal, needPrincipal){
     .filter(({st}) => String(st.Effect || '').toLowerCase() === effect)
     .filter(({st}) => stmtActionMatch(st, action))
     .filter(({st}) => stmtResourceMatch(st, resArn, overlap))
-    .filter(({st}) => !needPrincipal || stmtPrincipalMatch(st, principal))
-    .map(({st, i}) => ({sid: st.Sid || ('statement #' + (i + 1)), cond: condSummary(st),
-                        res: arr(st.Resource).map(String), st}));
+    .map(({st, i}) => ({st, i, pm: needPrincipal ? stmtPrincipalMatch(st, principal) : 'direct'}))
+    .filter(({pm}) => pm)
+    .map(({st, i, pm}) => ({sid: st.Sid || ('statement #' + (i + 1)), cond: condSummary(st),
+                        res: arr(st.Resource).map(String), st, delegated: pm === 'delegated'}));
 }
 
 /* =========================================================================
@@ -709,10 +731,15 @@ function evaluate(actionDef, principal, P, ctx){
   let idAllow = [], resAllow = [], idOk = false, resOk = false;
   const hasIdentity = principal.kind === 'self' && !!P.iam;
   const sameAccount = principal.kind === 'anon' ? false : (principal.account === ctx.bucketAccount);
+  // SCPs attach to accounts in your organisation. They never restrict anonymous callers or
+  // principals in other accounts reaching your resources; that is what a Resource Control Policy does.
+  const myAccts = ctx.myAccounts || [];
+  const inOrg = principal.kind === 'self' || (principal.kind !== 'anon' && !!principal.account &&
+    (principal.account === ctx.principalAccount || principal.account === ctx.bucketAccount || myAccts.includes(principal.account)));
 
   // Gate 1, explicit deny anywhere
   const denies = []
-    .concat(collect(P.scp, 'deny', action, resArn, principal, false).map(d => ({...d, from:'SCP'})))
+    .concat(inOrg ? collect(P.scp, 'deny', action, resArn, principal, false).map(d => ({...d, from:'SCP'})) : [])
     .concat(collect(P.pb, 'deny', action, resArn, principal, false).map(d => ({...d, from:'Permissions boundary'})))
     .concat(hasIdentity ? collect(P.iam, 'deny', action, resArn, principal, false).map(d => ({...d, from:'IAM policy'})) : [])
     .concat(isResAction ? collect(P.s3, 'deny', action, resArn, principal, true).map(d => ({...d, from:resLabel})) : []);
@@ -727,7 +754,10 @@ function evaluate(actionDef, principal, P, ctx){
     note: condDeny ? 'Denied when ' + condDeny.cond : 'No Deny statement matches this action'});
 
   // Gate 2, SCP ceiling
-  if(P.scp){
+  if(P.scp && !inOrg){
+    gates.push({n:'02', name:'SCP ceiling', state:'na', out:'Not applicable',
+      note:'SCPs bind principals inside your organisation, not this caller. Use a resource control policy (RCP) to limit external access'});
+  } else if(P.scp){
     const ok = collect(P.scp, 'allow', action, resArn, principal, false).length > 0;
     gates.push({n:'02', name:'SCP ceiling', state: ok ? 'pass' : 'block', out: ok ? 'Allowed' : 'Not allowed',
       note: ok ? 'Inside the organisation ceiling' : 'The SCP never allows this action, so nothing below can grant it'});
@@ -760,11 +790,18 @@ function evaluate(actionDef, principal, P, ctx){
   }
 
   // Gate 5, resource policy
+  let resDelegated = false;
   if(isResAction && P.s3){
     resAllow = collect(P.s3, 'allow', action, resArn, principal, true);
-    resOk = resAllow.length > 0;
-    gates.push({n:'05', name:resLabel, state: resOk ? 'pass' : 'na', out: resOk ? 'Allow' : 'No grant',
-      note: resOk ? resAllow.map(d => d.sid).join(', ') : 'No statement names this principal for this action'});
+    const direct = resAllow.filter(d => !d.delegated);
+    resOk = direct.length > 0;
+    resDelegated = !resOk && resAllow.length > 0;
+    if(resOk) resAllow = direct;
+    gates.push({n:'05', name:resLabel, state: resOk ? 'pass' : 'na',
+      out: resOk ? 'Allow' : (resDelegated ? 'Delegated' : 'No grant'),
+      note: resOk ? resAllow.map(d => d.sid).join(', ')
+          : resDelegated ? resAllow.map(d => d.sid).join(', ') + ' names the account, not this principal. AWS treats that as delegation to the account\'s IAM policies, not as a grant'
+          : 'No statement names this principal for this action'});
   } else {
     gates.push({n:'05', name:'Resource policy', state:'na', out: isResAction ? 'Not supplied' : 'Not applicable',
       note: isResAction ? 'No ' + resLabel.toLowerCase() + ' pasted' : 'This action is not on the resource the pasted resource policy names'});
@@ -778,12 +815,23 @@ function evaluate(actionDef, principal, P, ctx){
     reason = resOk ? 'The ' + resLabel.toLowerCase() + ' grants this to Principal "*", which means the public internet.'
                    : 'No public grant for this action.';
   } else if(sameAccount){
-    verdict = (idOk || resOk) ? 'ALLOW' : 'DENY';
-    by = idOk ? idAllow.map(d => 'IAM policy ' + d.sid) : [];
-    by = by.concat(resOk ? resAllow.map(d => resLabel + ' ' + d.sid) : []);
-    reason = verdict === 'ALLOW'
-      ? 'Same account, so an Allow in either the identity policy or the ' + resLabel.toLowerCase() + ' is enough.'
-      : 'Neither the identity policy nor the ' + resLabel.toLowerCase() + ' grants this.';
+    if(idOk || resOk){
+      verdict = 'ALLOW';
+      by = idOk ? idAllow.map(d => 'IAM policy ' + d.sid) : [];
+      by = by.concat(resOk ? resAllow.map(d => resLabel + ' ' + d.sid) : []);
+      reason = 'Same account, so an Allow in either the identity policy or the ' + resLabel.toLowerCase() + ' is enough.';
+    } else if(resDelegated && !hasIdentity){
+      verdict = 'CONDITIONAL';
+      by = resAllow.map(d => resLabel + ' ' + d.sid);
+      reason = 'The ' + resLabel.toLowerCase() + ' names the account root, which delegates the decision to IAM policies in account '
+        + (principal.account || '') + '. No identity policy for this principal was pasted, so the answer depends on it.';
+    } else if(resDelegated){
+      verdict = 'DENY';
+      reason = 'The ' + resLabel.toLowerCase() + ' names the account root. That delegates to the identity policy, and the identity policy does not grant this.';
+    } else {
+      verdict = 'DENY';
+      reason = 'Neither the identity policy nor the ' + resLabel.toLowerCase() + ' grants this.';
+    }
   } else {
     const needBoth = isResAction && P.s3;
     if(!needBoth){
@@ -791,7 +839,8 @@ function evaluate(actionDef, principal, P, ctx){
       by = idAllow.map(d => 'IAM policy ' + d.sid);
       reason = idOk ? 'Granted by the identity policy.' : 'No grant found.';
     } else if(hasIdentity){
-      verdict = (idOk && resOk) ? 'ALLOW' : 'DENY';
+      verdict = (idOk && (resOk || resDelegated)) ? 'ALLOW' : 'DENY';
+      if(resDelegated && idOk) resOk = true;
       by = idOk ? idAllow.map(d => 'IAM policy ' + d.sid) : [];
       by = by.concat(resOk ? resAllow.map(d => resLabel + ' ' + d.sid) : []);
       reason = verdict === 'ALLOW'
@@ -799,9 +848,9 @@ function evaluate(actionDef, principal, P, ctx){
         : (resOk ? 'The ' + resLabel.toLowerCase() + ' allows it, but the caller identity policy in the other account must allow it too.'
                  : 'The ' + resLabel.toLowerCase() + ' does not grant this to that account.');
     } else {
-      verdict = resOk ? 'CONDITIONAL' : 'DENY';
+      verdict = (resOk || resDelegated) ? 'CONDITIONAL' : 'DENY';
       by = resAllow.map(d => resLabel + ' ' + d.sid);
-      reason = resOk ? 'Cross account. The resource side allows it. Access happens only if that account also grants it in their own IAM policy, which is not visible here.'
+      reason = (resOk || resDelegated) ? 'Cross account. The resource side allows it. Access happens only if that account also grants it in their own IAM policy, which is not visible here.'
                      : 'No cross account grant for this action.';
     }
   }
@@ -809,6 +858,10 @@ function evaluate(actionDef, principal, P, ctx){
   const deciding = [].concat(idOk ? idAllow : [], resOk ? resAllow : []);
   const unconditional = deciding.filter(d => !d.cond);
   if(verdict === 'ALLOW' && deciding.length && !unconditional.length) verdict = 'CONDITIONAL';
+  if(verdict === 'ALLOW' && condDeny){
+    verdict = 'CONDITIONAL';
+    reason += ' A conditional Deny in the ' + condDeny.from + ' (' + condDeny.sid + ') blocks it whenever its condition holds.';
+  }
   const conds = verdict === 'CONDITIONAL' ? deciding.map(d => d.cond).filter(Boolean) : [];
 
   return finish(verdict, gates, {reason, by, conds, condDeny});
@@ -3180,6 +3233,33 @@ $('#clear-all').onclick = () => {
 document.addEventListener('keydown', e => {
   if((e.metaKey || e.ctrlKey) && e.key === 'Enter'){ e.preventDefault(); run(); }
 });
+
+/* =========================================================================
+   Engine self-test. Runs once at load against published vectors
+   (whyallowed-tests.json). A failing vector is reported in the footer.
+   ========================================================================= */
+const ENGINE_VERSION = '1.1.0';
+const TEST_VECTORS = [{"id":"V01","name":"Same-account :root in bucket policy is delegation, not a grant","expect":"DENY","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Sid":"NoS3","Effect":"Allow","Action":"ec2:Describe*","Resource":"*"}]},"s3":{"Statement":[{"Sid":"RootDelegate","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111111111111:root"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}},"ctx":{"resourceType":"s3","bucket":"b","bucketAccount":"111111111111","principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V02","name":"Same-account :root delegation with no identity policy pasted is undecidable","expect":"CONDITIONAL","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":null,"s3":{"Statement":[{"Sid":"RootDelegate","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111111111111:root"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}},"ctx":{"resourceType":"s3","bucket":"b","bucketAccount":"111111111111","principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V03","name":"Same-account :root delegation plus identity Allow is ALLOW","expect":"ALLOW","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Sid":"S3","Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]},"s3":{"Statement":[{"Sid":"RootDelegate","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111111111111:root"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}},"ctx":{"resourceType":"s3","bucket":"b","bucketAccount":"111111111111","principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V04","name":"Same-account direct role ARN in bucket policy grants without identity policy","expect":"ALLOW","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":null,"s3":{"Statement":[{"Sid":"Direct","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111111111111:role/Dev"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}},"ctx":{"resourceType":"s3","bucket":"b","bucketAccount":"111111111111","principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V05","name":"Unconditional Allow plus conditional Deny is CONDITIONAL","expect":"CONDITIONAL","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Sid":"A","Effect":"Allow","Action":"s3:*","Resource":"*"},{"Sid":"VpceOnly","Effect":"Deny","Action":"s3:*","Resource":"*","Condition":{"StringNotEquals":{"aws:SourceVpce":"vpce-0123"}}}]}},"ctx":{"principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V06","name":"SCP does not bind anonymous callers of a public bucket","expect":"ALLOW","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"anon","account":null,"arn":"*","label":"Anonymous"},"P":{"scp":{"Statement":[{"Effect":"Allow","Action":"ec2:*","Resource":"*"}]},"s3":{"Statement":[{"Sid":"Pub","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}},"ctx":{"resourceType":"s3","bucket":"b","bucketAccount":"111111111111","principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V07","name":"SCP does not bind a principal from an external account","expect":"CONDITIONAL","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"named","account":"999999999999","arn":"arn:aws:iam::999999999999:role/Partner","label":"Partner"},"P":{"scp":{"Statement":[{"Effect":"Deny","Action":"s3:*","Resource":"*"}]},"s3":{"Statement":[{"Sid":"X","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::999999999999:role/Partner"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}},"ctx":{"resourceType":"s3","bucket":"b","bucketAccount":"111111111111","principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V08","name":"SCP still binds the analysed identity inside the org","expect":"DENY","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"scp":{"Statement":[{"Effect":"Allow","Action":"ec2:*","Resource":"*"}]},"iam":{"Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}},"ctx":{"principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V09","name":"Resource ARNs are case-sensitive","expect":"DENY","action":{"a":"dynamodb:GetItem","c":"data"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Effect":"Allow","Action":"dynamodb:GetItem","Resource":"arn:aws:dynamodb:ap-southeast-1:111111111111:table/Orders"}]}},"ctx":{"resourceType":"dynamodb","resourceArn":"arn:aws:dynamodb:ap-southeast-1:111111111111:table/orders","bucketAccount":"111111111111","principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V10","name":"Action names are case-insensitive","expect":"ALLOW","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Effect":"Allow","Action":"S3:GETOBJECT","Resource":"*"}]}},"ctx":{"principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V11","name":"Explicit Deny always wins","expect":"DENY","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"},{"Effect":"Deny","Action":"s3:GetObject","Resource":"*"}]}},"ctx":{"principalAccount":"111111111111","myAccounts":["111111111111"]}},{"id":"V12","name":"Cross-account needs both sides","expect":"DENY","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"222222222222","arn":"arn:aws:iam::222222222222:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Effect":"Allow","Action":"ec2:*","Resource":"*"}]},"s3":{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:role/Dev"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}},"ctx":{"resourceType":"s3","bucket":"b","bucketAccount":"111111111111","principalAccount":"222222222222","myAccounts":["222222222222"]}},{"id":"V13","name":"Permissions boundary caps the identity policy","expect":"DENY","action":{"a":"s3:GetObject","c":"data","lvl":"object"},"principal":{"kind":"self","account":"111111111111","arn":"arn:aws:iam::111111111111:role/Dev","label":"Dev"},"P":{"iam":{"Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]},"pb":{"Statement":[{"Effect":"Allow","Action":"ec2:*","Resource":"*"}]}},"ctx":{"principalAccount":"111111111111","myAccounts":["111111111111"]}}];
+function runSelfTest(){
+  const fails = [];
+  TEST_VECTORS.forEach(t => {
+    try {
+      const P = Object.assign({iam:null, s3:null, scp:null, pb:null}, t.P);
+      const got = evaluate(t.action, t.principal, P, t.ctx).verdict;
+      if(got !== t.expect) fails.push(t.id + ' expected ' + t.expect + ' got ' + got);
+    } catch(e){ fails.push(t.id + ' threw ' + e.message); }
+  });
+  const el = document.getElementById('selftest');
+  if(el){
+    el.textContent = fails.length
+      ? 'Engine v' + ENGINE_VERSION + ' self-test FAILED: ' + fails.join('; ')
+      : 'Engine v' + ENGINE_VERSION + ' \u00b7 ' + TEST_VECTORS.length + '/' + TEST_VECTORS.length + ' test vectors passing';
+    if(fails.length) el.style.color = 'var(--crit)';
+  }
+  if(fails.length) console.error('WhyAllowed self-test failures', fails);
+  return fails;
+}
+try { runSelfTest(); } catch(e){ console.error('WhyAllowed self-test could not run', e); }
 </script>
 </body>
 </html>
