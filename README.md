@@ -229,6 +229,13 @@ Two documented exceptions are implemented, because both routinely surprise peopl
 - **Role trust policies.** Inside one account, an explicit principal ARN in the trust policy is enough on its own. An account root principal, or any cross-account principal, also needs `sts:AssumeRole` in the caller's identity policy. Those edges are drawn dashed in the graph.
 - **KMS key policies.** The key policy must name the principal itself. An IAM policy only works when the key policy delegates to the account root, which is what the standard `Enable IAM User Permissions` statement does.
 
+Two rules apply to every layer, and both exist to keep the answer deterministic:
+
+- **Cross-account always needs both sides.** A resource policy or a KMS key policy naming a principal in another account is only half the decision. The caller's own IAM policy must allow the action too. When that policy has not been pasted, the verdict is `CONDITIONAL`, never `ALLOW`.
+- **A conditional Deny is never dropped.** It cannot turn a denial into an allow, but an otherwise clean Allow becomes `CONDITIONAL`, because the Deny wins whenever its condition holds.
+
+**Verifying the engine.** `whyallowed-tests.json` holds the published test vectors, each one a policy set with an expected verdict. They run automatically every time the page loads and the result is printed in the footer, so you can see for yourself that the engine passes before you trust a verdict. A failing vector turns the line red.
+
 **Scoring:** critical 30, high 14, medium 6, low 2, capped at 100. Bands are Contained under 20, Elevated under 45, High under 75, Severe above that. It is a communication device for prioritising a session, not a compliance rating.
 
 ---
@@ -236,6 +243,7 @@ Two documented exceptions are implemented, because both routinely surprise peopl
 ## Limits, stated plainly
 
 - **Conditions are reported, not simulated.** There is no request context in a browser, so a conditioned grant shows as "Allow if" with the condition printed. It never guesses whether the condition would be met.
+- **Policy variables are matched literally.** A resource containing `${aws:username}` or `${aws:PrincipalTag/team}` is compared as written, because the value is only known at request time. Grants written with variables therefore under-match, which errs toward reporting less access than exists.
 - **Effective permissions come from a probe list**, not the full AWS action set. The list is the high-signal actions across every service, plus every action your policies name or cover with a wildcard. The header states how many actions were probed. Treat the counts as a floor.
 - **Only what you paste is considered.** Other attached policies, session policies, S3 Block Public Access, object ACLs, resource control policies and VPC endpoint policies can all change the real answer.
 - **CloudTrail proves what was used, never what is needed.** A short window misses monthly and quarterly jobs, and S3 data events are off by default on most trails. Send generated policies to a staging role first.

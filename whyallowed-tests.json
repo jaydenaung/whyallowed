@@ -1,0 +1,901 @@
+[
+  {
+    "id": "V01",
+    "name": "Same-account :root in bucket policy is delegation, not a grant",
+    "expect": "DENY",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "NoS3",
+            "Effect": "Allow",
+            "Action": "ec2:Describe*",
+            "Resource": "*"
+          }
+        ]
+      },
+      "s3": {
+        "Statement": [
+          {
+            "Sid": "RootDelegate",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111111111111:root"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111",
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V02",
+    "name": "Same-account :root delegation with no identity policy pasted is undecidable",
+    "expect": "CONDITIONAL",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": null,
+      "s3": {
+        "Statement": [
+          {
+            "Sid": "RootDelegate",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111111111111:root"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111",
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V03",
+    "name": "Same-account :root delegation plus identity Allow is ALLOW",
+    "expect": "ALLOW",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "S3",
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      },
+      "s3": {
+        "Statement": [
+          {
+            "Sid": "RootDelegate",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111111111111:root"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111",
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V04",
+    "name": "Same-account direct role ARN in bucket policy grants without identity policy",
+    "expect": "ALLOW",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": null,
+      "s3": {
+        "Statement": [
+          {
+            "Sid": "Direct",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111111111111:role/Dev"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111",
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V05",
+    "name": "Unconditional Allow plus conditional Deny is CONDITIONAL",
+    "expect": "CONDITIONAL",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "A",
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*"
+          },
+          {
+            "Sid": "VpceOnly",
+            "Effect": "Deny",
+            "Action": "s3:*",
+            "Resource": "*",
+            "Condition": {
+              "StringNotEquals": {
+                "aws:SourceVpce": "vpce-0123"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V06",
+    "name": "SCP does not bind anonymous callers of a public bucket",
+    "expect": "ALLOW",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "anon",
+      "account": null,
+      "arn": "*",
+      "label": "Anonymous"
+    },
+    "P": {
+      "scp": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "ec2:*",
+            "Resource": "*"
+          }
+        ]
+      },
+      "s3": {
+        "Statement": [
+          {
+            "Sid": "Pub",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111",
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V07",
+    "name": "SCP does not bind a principal from an external account",
+    "expect": "CONDITIONAL",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "named",
+      "account": "999999999999",
+      "arn": "arn:aws:iam::999999999999:role/Partner",
+      "label": "Partner"
+    },
+    "P": {
+      "scp": {
+        "Statement": [
+          {
+            "Effect": "Deny",
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
+      },
+      "s3": {
+        "Statement": [
+          {
+            "Sid": "X",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::999999999999:role/Partner"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111",
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V08",
+    "name": "SCP still binds the analysed identity inside the org",
+    "expect": "DENY",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "scp": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "ec2:*",
+            "Resource": "*"
+          }
+        ]
+      },
+      "iam": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V09",
+    "name": "Resource ARNs are case-sensitive",
+    "expect": "DENY",
+    "action": {
+      "a": "dynamodb:GetItem",
+      "c": "data"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "dynamodb:GetItem",
+            "Resource": "arn:aws:dynamodb:ap-southeast-1:111111111111:table/Orders"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "dynamodb",
+      "resourceArn": "arn:aws:dynamodb:ap-southeast-1:111111111111:table/orders",
+      "bucketAccount": "111111111111",
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V10",
+    "name": "Action names are case-insensitive",
+    "expect": "ALLOW",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "S3:GETOBJECT",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V11",
+    "name": "Explicit Deny always wins",
+    "expect": "DENY",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*"
+          },
+          {
+            "Effect": "Deny",
+            "Action": "s3:GetObject",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V12",
+    "name": "Cross-account needs both sides",
+    "expect": "DENY",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "222222222222",
+      "arn": "arn:aws:iam::222222222222:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "ec2:*",
+            "Resource": "*"
+          }
+        ]
+      },
+      "s3": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::222222222222:role/Dev"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111",
+      "principalAccount": "222222222222",
+      "myAccounts": [
+        "222222222222"
+      ]
+    }
+  },
+  {
+    "id": "V13",
+    "name": "Permissions boundary caps the identity policy",
+    "expect": "DENY",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
+      },
+      "pb": {
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "ec2:*",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V14",
+    "name": "Allow with NotResource still grants outside the excluded ARN",
+    "expect": "ALLOW",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "AllButSecrets",
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "NotResource": "arn:aws:s3:::secret-bucket/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V15",
+    "name": "Allow with NotResource does not grant inside the excluded ARN",
+    "expect": "DENY",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "AllButSecrets",
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "NotResource": "arn:aws:s3:::secret-bucket/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ],
+      "resourceType": "s3",
+      "bucket": "secret-bucket",
+      "bucketAccount": "111111111111"
+    }
+  },
+  {
+    "id": "V16",
+    "name": "Deny with NotAction blocks actions outside the carve-out",
+    "expect": "DENY",
+    "action": {
+      "a": "ec2:DescribeInstances",
+      "c": "read"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "AllowEc2",
+            "Effect": "Allow",
+            "Action": "ec2:*",
+            "Resource": "*"
+          },
+          {
+            "Sid": "DenyAllButS3",
+            "Effect": "Deny",
+            "NotAction": "s3:*",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V17",
+    "name": "NotPrincipal Deny in a resource policy spares the named principal",
+    "expect": "ALLOW",
+    "action": {
+      "a": "s3:GetObject",
+      "c": "data",
+      "lvl": "object"
+    },
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Admin",
+      "label": "Admin"
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "A",
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
+      },
+      "s3": {
+        "Statement": [
+          {
+            "Sid": "D",
+            "Effect": "Deny",
+            "NotPrincipal": {
+              "AWS": "arn:aws:iam::111111111111:role/Admin"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::b/*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ],
+      "resourceType": "s3",
+      "bucket": "b",
+      "bucketAccount": "111111111111"
+    }
+  },
+  {
+    "id": "V18",
+    "name": "Cross-account KMS: key policy names the principal but caller IAM does not allow it",
+    "expect": "DENY",
+    "kmsAction": "kms:Decrypt",
+    "principal": {
+      "kind": "self",
+      "account": "222222222222",
+      "arn": "arn:aws:iam::222222222222:role/Partner",
+      "label": "Partner"
+    },
+    "kms": {
+      "keyArn": "arn:aws:kms:ap-southeast-1:111111111111:key/abcd",
+      "keyPolicy": {
+        "Statement": [
+          {
+            "Sid": "Direct",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::222222222222:role/Partner"
+            },
+            "Action": "kms:Decrypt",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "NoKms",
+            "Effect": "Allow",
+            "Action": "ec2:*",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "222222222222",
+      "myAccounts": [
+        "222222222222"
+      ]
+    }
+  },
+  {
+    "id": "V19",
+    "name": "Cross-account KMS: allowed when the key policy and the caller IAM policy both allow",
+    "expect": "ALLOW",
+    "kmsAction": "kms:Decrypt",
+    "principal": {
+      "kind": "self",
+      "account": "222222222222",
+      "arn": "arn:aws:iam::222222222222:role/Partner",
+      "label": "Partner"
+    },
+    "kms": {
+      "keyArn": "arn:aws:kms:ap-southeast-1:111111111111:key/abcd",
+      "keyPolicy": {
+        "Statement": [
+          {
+            "Sid": "Direct",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::222222222222:role/Partner"
+            },
+            "Action": "kms:Decrypt",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "P": {
+      "iam": {
+        "Statement": [
+          {
+            "Sid": "Kms",
+            "Effect": "Allow",
+            "Action": "kms:Decrypt",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "principalAccount": "222222222222",
+      "myAccounts": [
+        "222222222222"
+      ]
+    }
+  },
+  {
+    "id": "V20",
+    "name": "Same-account KMS: the key policy naming the principal is sufficient on its own",
+    "expect": "ALLOW",
+    "kmsAction": "kms:Decrypt",
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "kms": {
+      "keyArn": "arn:aws:kms:ap-southeast-1:111111111111:key/abcd",
+      "keyPolicy": {
+        "Statement": [
+          {
+            "Sid": "Direct",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111111111111:role/Dev"
+            },
+            "Action": "kms:Decrypt",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    "P": {
+      "iam": null
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  },
+  {
+    "id": "V21",
+    "name": "A conditional Deny in the key policy downgrades an unconditional Allow",
+    "expect": "CONDITIONAL",
+    "kmsAction": "kms:Decrypt",
+    "principal": {
+      "kind": "self",
+      "account": "111111111111",
+      "arn": "arn:aws:iam::111111111111:role/Dev",
+      "label": "Dev"
+    },
+    "kms": {
+      "keyArn": "arn:aws:kms:ap-southeast-1:111111111111:key/abcd",
+      "keyPolicy": {
+        "Statement": [
+          {
+            "Sid": "Allow",
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::111111111111:role/Dev"
+            },
+            "Action": "kms:Decrypt",
+            "Resource": "*"
+          },
+          {
+            "Sid": "VpceOnly",
+            "Effect": "Deny",
+            "Principal": "*",
+            "Action": "kms:*",
+            "Resource": "*",
+            "Condition": {
+              "StringNotEquals": {
+                "aws:SourceVpce": "vpce-0123"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "P": {
+      "iam": null
+    },
+    "ctx": {
+      "principalAccount": "111111111111",
+      "myAccounts": [
+        "111111111111"
+      ]
+    }
+  }
+]

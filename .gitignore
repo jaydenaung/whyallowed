@@ -30,3 +30,6 @@ scratch/
 
 # private engineering notes, never publish
 HANDOFF.md
+
+# deploy staging, contains only public files
+dist/
