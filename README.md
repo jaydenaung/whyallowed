@@ -285,7 +285,7 @@ frame-ancestors 'none'
 shasum -a 256 index.html
 ```
 
-**Reporting an issue.** Open a GitHub issue. Do not paste real policies, account IDs or ARNs into it.
+**Reporting an issue.** Open an issue at [github.com/jaydenaung/whyallowed/issues](https://github.com/jaydenaung/whyallowed/issues). Do not paste real policies, account IDs or ARNs into it.
 
 ---
 

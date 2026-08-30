@@ -71,6 +71,11 @@ h1{font-family:var(--mono);font-size:clamp(30px,4.4vw,46px);font-weight:700;lett
 .tagline{margin:10px 0 0;color:var(--ink-2);max-width:60ch;font-size:14.5px}
 .local-badge{display:inline-flex;align-items:center;gap:7px;margin-top:12px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ok);background:var(--ok-w);border:1px solid rgba(12,122,102,.3);border-radius:99px;padding:4px 11px}
 .local-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+/* The source link sits beside the privacy badge so the claim and its proof are adjacent.
+   Deliberately neutral, not green: green reads as "verified", this is an invitation to check. */
+.source-badge{margin-left:8px;color:var(--blue);background:var(--surface);border-color:var(--line-2);text-decoration:none;transition:border-color .15s,background .15s}
+.source-badge::before{background:var(--blue)}
+.source-badge:hover{background:var(--wash);border-color:var(--blue)}
 .toolbar{display:flex;flex-wrap:wrap;gap:8px}
 
 button{font-family:var(--sans);font-size:13.5px;cursor:pointer;border-radius:var(--r);transition:background .15s,border-color .15s,color .15s}
@@ -325,6 +330,7 @@ code.inline{font-family:var(--mono);font-size:12.5px;background:var(--wash);padd
     <h1>WhyAllowed</h1>
     <p class="tagline">Paste AWS policy JSON. See who can actually reach what, why they can reach it, and what breaks if that identity is stolen.</p>
     <span class="local-badge">Runs entirely in this browser</span>
+    <a class="local-badge source-badge" href="https://github.com/jaydenaung/whyallowed" target="_blank" rel="noopener noreferrer">Read the source on GitHub</a>
   </div>
   <div class="toolbar">
     <select class="btn select" id="load-example" aria-label="Load an example">
@@ -427,7 +433,11 @@ code.inline{font-family:var(--mono);font-size:12.5px;background:var(--wash);padd
 
 <footer class="site-footer">
   <p class="foot-tag">Built by a cloud security architect, for cloud security architects.</p>
-  <p class="byline">A free tool by <a href="https://x.com/jaydenaung" target="_blank" rel="noopener noreferrer">Jayden Aung</a> &middot; MIT licensed &middot; &copy; 2026</p>
+  <p class="byline">A free tool by <a href="https://jaydenaung.com" target="_blank" rel="noopener noreferrer">Jayden Aung</a>
+    &middot; <a href="https://x.com/jaydenaung" target="_blank" rel="noopener noreferrer">@jaydenaung</a>
+    &middot; <a href="https://github.com/jaydenaung/whyallowed" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+    &middot; <a href="https://github.com/jaydenaung/whyallowed/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT licensed</a>
+    &middot; &copy; 2026</p>
   <p class="byline" id="selftest"></p>
   <div class="foot-legal">
     <p><b>Independent project.</b> WhyAllowed is a personal project. It is not affiliated with, sponsored by, or endorsed by Amazon Web Services or any other organisation. Amazon Web Services, AWS, IAM, S3, KMS, CloudTrail and related marks are trademarks of Amazon.com, Inc. or its affiliates.</p>
@@ -3309,10 +3319,22 @@ function runSelfTest(){
   S.kms = savedKms;
   const el = document.getElementById('selftest');
   if(el){
-    el.textContent = fails.length
-      ? 'Engine v' + ENGINE_VERSION + ' self-test FAILED: ' + fails.join('; ')
-      : 'Engine v' + ENGINE_VERSION + ' \u00b7 ' + TEST_VECTORS.length + '/' + TEST_VECTORS.length + ' test vectors passing';
-    if(fails.length) el.style.color = 'var(--crit)';
+    const VECTOR_URL = 'https://github.com/jaydenaung/whyallowed/blob/main/whyallowed-tests.json';
+    // Built with DOM nodes rather than innerHTML: nothing here is user-controlled today, and
+    // keeping the single HTML sink in render() the only one keeps that guarantee cheap to audit.
+    el.textContent = '';
+    if(fails.length){
+      el.style.color = 'var(--crit)';
+      el.textContent = 'Engine v' + ENGINE_VERSION + ' self-test FAILED: ' + fails.join('; ') + ' \u00b7 ';
+    } else {
+      el.appendChild(document.createTextNode('Engine v' + ENGINE_VERSION + ' \u00b7 ' +
+        TEST_VECTORS.length + '/' + TEST_VECTORS.length + ' '));
+    }
+    const a = document.createElement('a');
+    a.href = VECTOR_URL; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.textContent = 'test vectors';
+    el.appendChild(a);
+    el.appendChild(document.createTextNode(fails.length ? '' : ' passing'));
   }
   if(fails.length) console.error('WhyAllowed self-test failures', fails);
   return fails;
